@@ -45,7 +45,7 @@ ComfyUI 字幕检测与擦除节点，支持视频字幕的自动检测和智能
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/your-repo/comfyui_subtitle_detector.git
+git clone https://github.com/Fluchw/comfyui_subtitle_detector.git
 ```
 
 ### 2. 安装依赖
@@ -57,13 +57,36 @@ pip install -r requirements.txt
 
 ### 3. 下载模型
 
-将以下模型文件放入 `ComfyUI/models/DiffuEraser/` 目录：
+在 ComfyUI 根目录下执行以下命令下载模型：
+
+```bash
+# 安装 modelscope (如果没有)
+pip install modelscope
+
+# 下载 ProPainter 模型到 models/DiffuEraser/
+python custom_nodes/comfyui_subtitle_detector/download_modelscope_multi.py --model Fluchw/propainter --subdir "*.pt" "*.pth" --output ./models/DiffuEraser
+```
+
+或者手动下载模型文件放入 `ComfyUI/models/DiffuEraser/` 目录：
 
 - `ProPainter.pth` - ProPainter 主模型
 - `raft-things.pth` - RAFT 光流模型
 - `recurrent_flow_completion.pth` - 流补全模型
 
-模型下载地址：[ProPainter Releases](https://github.com/sczhou/ProPainter/releases)
+手动下载地址：[ProPainter Releases](https://github.com/sczhou/ProPainter/releases)
+
+#### 模型文件结构
+
+```
+ComfyUI/
+└── models/
+    └── DiffuEraser/
+        ├── ProPainter.pth                    # propainter_model 选这个
+        ├── raft-things.pth                   # raft_model 选这个
+        └── recurrent_flow_completion.pth     # flow_model 选这个
+```
+
+> 更多模型下载命令（包括 DiffuEraser 精修节点所需模型）请参考 [load_model.txt](load_model.txt)
 
 ## 使用示例
 
@@ -92,6 +115,117 @@ scipy>=1.10.0
 tqdm>=4.65.0
 psutil>=5.9.0
 ```
+
+---
+
+## 项目结构
+
+```
+comfyui_subtitle_detector/
+├── __init__.py              # ComfyUI 节点注册入口
+├── nodes.py                 # SubtitleDetectorRapidOCR 节点实现
+├── eraser_node.py           # SubtitleEraserProPainter 节点实现
+├── rapid_ocr_engine.py      # RapidOCR 引擎封装
+├── frame_renderer.py        # 检测框渲染器
+├── propainter/              # ProPainter 视频修复模型（从 DiffuEraser 复制）
+│   ├── inference.py         # ProPainter 推理入口
+│   ├── model/               # 模型定义
+│   └── RAFT/                # 光流估计模型
+├── libs/                    # DiffuEraser 相关库（从 ComfyUI_DiffuEraser 复制）
+│   ├── diffueraser.py       # DiffuEraser 封装
+│   └── pipeline_diffueraser.py
+├── sd15_repo/               # Stable Diffusion 1.5 配置文件
+├── workflows/               # 示例工作流
+│   └── subtitle_eraser_workflow.json
+└── web/js/                  # 前端预览脚本
+```
+
+## 开发注意事项
+
+### 1. 内存管理
+
+**问题**：处理高分辨率长视频时容易内存溢出（RAM 和 VRAM）。
+
+**解决方案**（在 `eraser_node.py` 中实现）：
+- **分块处理**：根据分辨率动态调整 chunk_size
+  - 超高清 (>1080p): 8帧/chunk
+  - 1080p: 10帧/chunk
+  - 720p: 16帧/chunk
+  - 标清: 24帧/chunk
+- **流式处理**：只加载当前 chunk 需要的帧，处理完立即释放
+- **延迟创建输出 tensor**：根据 ProPainter 实际输出尺寸创建，而非预设尺寸
+
+### 2. ProPainter 自动缩放
+
+**问题**：ProPainter 对大分辨率视频会自动缩放到 960 宽度（见 `input video size is too large, resize to 960`）。
+
+**解决方案**：
+- 在第一个 chunk 处理后，根据实际输出尺寸 (`actual_out_w`, `actual_out_h`) 创建输出 tensor
+- 处理完成后，统一 resize 回原始尺寸
+
+### 3. 模型缓存
+
+**实现**：使用类级别变量缓存已加载的模型
+```python
+class SubtitleEraserProPainter:
+    _cached_model = None
+    _cached_model_paths = None
+```
+避免重复加载模型，提升二次运行速度。
+
+### 4. RapidOCR GPU 加速
+
+**配置**（在 `rapid_ocr_engine.py` 中）：
+```python
+params = {
+    "Det.engine_type": EngineType.TORCH,
+    "EngineConfig.torch.use_cuda": True,
+    "EngineConfig.torch.gpu_id": 0,
+}
+```
+
+**注意**：即使启用 GPU，CPU 仍会有 60-70% 占用，因为图像预处理/后处理在 CPU 上进行。
+
+### 5. 进度条
+
+使用 ComfyUI 的 `ProgressBar` 显示处理进度：
+```python
+from comfy.utils import ProgressBar
+pbar = ProgressBar(batch_size)
+pbar.update(1)
+```
+
+### 6. 关键文件说明
+
+| 文件 | 说明 |
+|------|------|
+| `nodes.py` | 字幕检测节点，调用 RapidOCR 进行 OCR |
+| `eraser_node.py` | 字幕擦除节点，调用 ProPainter 进行视频修复 |
+| `rapid_ocr_engine.py` | RapidOCR 封装，支持 GPU 加速和批处理 |
+| `propainter/inference.py` | ProPainter 推理入口，`Propainter.forward()` 是核心方法 |
+
+### 7. 数据流
+
+```
+ComfyUI Tensor [B,H,W,C] (0-1 float)
+    ↓ 转换
+PIL Image 列表
+    ↓ ProPainter 处理
+PIL Image 列表（可能尺寸不同）
+    ↓ 转换 + Resize
+ComfyUI Tensor [B,H,W,C] (0-1 float)
+```
+
+### 8. 常见问题
+
+| 问题 | 原因 | 解决方案 |
+|------|------|----------|
+| Out of Memory (RAM) | 长视频帧数太多 | 减小 `frame_load_cap` 或使用 `select_every_nth` 跳帧 |
+| Out of Memory (VRAM) | 分辨率太高 | 自动降低 chunk_size，或手动降低输入分辨率 |
+| 输出尺寸不匹配 | ProPainter 自动缩放 | 已在代码中处理，会自动 resize 回原始尺寸 |
+| CPU 占用高 | RapidOCR 预处理 | 正常现象，GPU 仍在加速核心计算 |
+
+---
 
 ## 致谢
 
