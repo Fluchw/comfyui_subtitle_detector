@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+ComfyUI Subtitle Detector - RapidOCR Implementation
+"""
+
+from .nodes import NODE_CLASS_MAPPINGS as NODES_MAPPINGS
+from .nodes import NODE_DISPLAY_NAME_MAPPINGS as NODES_DISPLAY_MAPPINGS
+
+from .video_loader_node import NODE_CLASS_MAPPINGS as LOADER_MAPPINGS
+from .video_loader_node import NODE_DISPLAY_NAME_MAPPINGS as LOADER_DISPLAY_MAPPINGS
+
+from .eraser_node import NODE_CLASS_MAPPINGS as ERASER_MAPPINGS
+from .eraser_node import NODE_DISPLAY_NAME_MAPPINGS as ERASER_DISPLAY_MAPPINGS
+
+# 合并所有节点
+NODE_CLASS_MAPPINGS = {**NODES_MAPPINGS, **LOADER_MAPPINGS, **ERASER_MAPPINGS}
+NODE_DISPLAY_NAME_MAPPINGS = {**NODES_DISPLAY_MAPPINGS, **LOADER_DISPLAY_MAPPINGS, **ERASER_DISPLAY_MAPPINGS}
+
+# 注册 web 目录以加载前端扩展
+WEB_DIRECTORY = "./web"
+
+__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', 'WEB_DIRECTORY']
