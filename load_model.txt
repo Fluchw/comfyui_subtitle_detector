@@ -6,16 +6,8 @@
 modelscope download --model xingzi/diffuEraser --local_dir ./models/DiffuEraservae
 
 # ==================== 2. ProPainter 模型 ====================
-# 下载到 models/DiffuEraservae/propainter/
-python custom_nodes/comfyui_subtitle_detector/download_modelscope_multi.py --model Fluchw/propainter --subdir "*.pt" "*.pth" --output ./models/DiffuEraservae/propainter
-
-# 然后复制到 DiffuEraser 目录供节点识别
-# Windows:
-copy models\DiffuEraservae\propainter\*.pth models\DiffuEraser\
-copy models\DiffuEraservae\propainter\*.pt models\DiffuEraser\
-# Linux/Mac:
-# cp models/DiffuEraservae/propainter/*.pth models/DiffuEraser/
-# cp models/DiffuEraservae/propainter/*.pt models/DiffuEraser/
+# 直接下载到 models/DiffuEraser/ (SubtitleEraserProPainter 节点从这里加载)
+python custom_nodes/comfyui_subtitle_detector/download_modelscope_multi.py --model Fluchw/propainter --subdir "*.pt" "*.pth" --output ./models/DiffuEraser
 
 # ==================== 3. VAE 模型 ====================
 # 下载到 models/vae/
@@ -34,19 +26,18 @@ python custom_nodes/comfyui_subtitle_detector/download_modelscope_multi.py --mod
 # ==================== 模型文件结构 ====================
 # ComfyUI/
 # ├── models/
-# │   ├── DiffuEraser/              # Propainter_Loader 从这里加载
-# │   │   ├── ProPainter.pth        # propainter 选这个
-# │   │   ├── raft-things.pth       # fix_raft 选这个
-# │   │   └── recurrent_flow_completion.pth  # flow 选这个
+# │   ├── DiffuEraser/              # SubtitleEraserProPainter 节点从这里加载
+# │   │   ├── ProPainter.pth        # propainter_model 选这个
+# │   │   ├── raft-things.pth       # raft_model 选这个
+# │   │   └── recurrent_flow_completion.pth  # flow_model 选这个
 # │   │
-# │   ├── DiffuEraservae/           # DiffuEraser 主模型
+# │   ├── DiffuEraservae/           # DiffuEraser 主模型 (精修节点使用)
 # │   │   ├── brushnet/
 # │   │   │   ├── config.json
 # │   │   │   └── diffusion_pytorch_model.safetensors
-# │   │   ├── unet_main/
-# │   │   │   ├── config.json
-# │   │   │   └── diffusion_pytorch_model.safetensors
-# │   │   └── propainter/           # ProPainter 模型备份
+# │   │   └── unet_main/
+# │   │       ├── config.json
+# │   │       └── diffusion_pytorch_model.safetensors
 # │   │
 # │   ├── vae/
 # │   │   └── sd-vae-ft-mse/
@@ -57,23 +48,16 @@ python custom_nodes/comfyui_subtitle_detector/download_modelscope_multi.py --mod
 # │       └── pcm_sd15_*.safetensors  # 其他 PCM LoRA
 
 # ==================== 节点配置说明 ====================
-# Propainter_Loader:
-#   - propainter: ProPainter.pth
-#   - flow: recurrent_flow_completion.pth
-#   - fix_raft: raft-things.pth
-#   - device: cuda
+# SubtitleEraserProPainter (字幕擦除主节点):
+#   - propainter_model: ProPainter.pth
+#   - raft_model: raft-things.pth
+#   - flow_model: recurrent_flow_completion.pth
+#   - mask_dilation: 4 (mask 膨胀)
+#   - ref_stride: 10 (参考帧间隔)
+#   - neighbor_length: 10 (邻近帧数量)
+#   - subvideo_length: 80 (子视频长度，用于长视频分段处理)
 #
-# DiffuEraser_Loader:
+# SubtitleEraserDiffuEraser (精修节点，可选):
 #   - vae: sd-vae-ft-mse/diffusion_pytorch_model.safetensors
-#   - lora: pcm_sd15_smallcfg_2step_converted.safetensors (2步快速) 或其他
-#
-# DiffuEraser_PreData:
-#   - images: 视频帧
-#   - video_mask: 字幕检测节点输出的 subtitle_mask
-#
-# Propainter_Sampler:
-#   - video_length: 视频长度
-#   - subvideo_length: 分段长度 (默认50，用于长视频处理)
-#
-# DiffuEraser_Sampler:
-#   - steps: 推理步数 (配合 PCM LoRA，2-4步即可)
+#   - lora: pcm_sd15_smallcfg_2step_converted.safetensors (2步快速)
+#   - steps: 2-4 (配合 PCM LoRA)
