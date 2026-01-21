@@ -54,6 +54,28 @@ ComfyUI 字幕检测与擦除节点，支持视频字幕的自动检测和智能
   - 如果显存使用率低但 GPU 使用率高，可以增大此值来加速处理
   - 如果显存不足报错，可以减小此值
 
+### SubtitleEraserDiffuEraser
+
+DiffuEraser 精修节点，使用扩散模型对 ProPainter 结果进行精修。
+
+**已移除 SD1.5 完整模型依赖**，直接使用独立的 CLIP 和 VAE 模型文件。
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| vae | VAE 模型文件 | sd-vae-ft-mse.safetensors |
+| clip | CLIP 模型文件 | clip_l.safetensors |
+| lora | 可选 LoRA 模型 (如 PCM 加速) | none |
+| prompt | 提示词，描述期望的背景 | clean background, high quality |
+| steps | 推理步数 | 4 |
+| seed | 随机种子 | 0 |
+| mask_dilation | mask 膨胀像素 | 4 |
+| blended | 是否混合原图边缘 | True |
+
+#### 工作流程
+
+1. ProPainter 先进行基础擦除（生成 priori）
+2. DiffuEraser 使用扩散模型精修细节
+
 ## 安装
 
 ### 1. 克隆仓库
@@ -78,34 +100,53 @@ pip install -r requirements.txt
 # 安装 modelscope (如果没有)
 pip install modelscope
 
-# 下载 ProPainter 模型到 models/DiffuEraser/
+# 1. 下载 ProPainter 模型 (必需)
 python custom_nodes/comfyui_subtitle_detector/download_modelscope_multi.py --model Fluchw/propainter --subdir "*.pt" "*.pth" --output ./models/DiffuEraser
+
+# 2. 下载 DiffuEraser 模型 (精修节点需要)
+modelscope download --model Kijai/DiffuEraser_comfy --local_dir ./models/DiffuEraser
+
+# 3. 下载 VAE 模型 (精修节点需要)
+modelscope download --model stabilityai/sd-vae-ft-mse diffusion_pytorch_model.safetensors --local_dir ./models/vae
+# 重命名为标准格式 (Linux/Mac)
+mv ./models/vae/diffusion_pytorch_model.safetensors ./models/vae/sd-vae-ft-mse.safetensors
+# 或 Windows:
+# ren models\vae\diffusion_pytorch_model.safetensors sd-vae-ft-mse.safetensors
+
+# 4. CLIP 模型 (通常 ComfyUI 已有 clip_l.safetensors)
+# 如果没有，可从 HuggingFace 下载 openai/clip-vit-large-patch14
 ```
-
-或者手动下载模型文件放入 `ComfyUI/models/DiffuEraser/` 目录：
-
-- `ProPainter.pth` - ProPainter 主模型
-- `raft-things.pth` - RAFT 光流模型
-- `recurrent_flow_completion.pth` - 流补全模型
-
-手动下载地址：[ProPainter Releases](https://github.com/sczhou/ProPainter/releases)
 
 #### 模型文件结构
 
 ```
 ComfyUI/
 └── models/
+    ├── clip/
+    │   └── clip_l.safetensors           # CLIP 文本编码器 (精修节点)
+    ├── vae/
+    │   └── sd-vae-ft-mse.safetensors    # VAE 模型 (精修节点)
+    ├── loras/
+    │   └── pcm_sd15_*.safetensors       # 可选 PCM LoRA 加速
     └── DiffuEraser/
-        ├── ProPainter.pth                    # propainter_model 选这个
-        ├── raft-things.pth                   # raft_model 选这个
-        └── recurrent_flow_completion.pth     # flow_model 选这个
+        ├── ProPainter.pth               # ProPainter 主模型
+        ├── raft-things.pth              # RAFT 光流模型
+        ├── recurrent_flow_completion.pth # 流补全模型
+        ├── brushnet/                    # DiffuEraser BrushNet
+        │   ├── config.json
+        │   └── diffusion_pytorch_model.safetensors
+        └── unet_main/                   # DiffuEraser UNet
+            ├── config.json
+            └── diffusion_pytorch_model.safetensors
 ```
 
-> 更多模型下载命令（包括 DiffuEraser 精修节点所需模型）请参考 [load_model.txt](load_model.txt)
+> **注意**：DiffuEraser 精修节点已移除对完整 SD1.5 checkpoint 的依赖，只需要独立的 CLIP 和 VAE 文件。
+
+> 更多模型下载命令请参考 [load_model.txt](load_model.txt)
 
 ## 使用示例
 
-### 基本工作流
+### 基本工作流 (ProPainter)
 
 ```
 VHS_LoadVideo → SubtitleDetectorRapidOCR → SubtitleEraserProPainter → VHS_VideoCombine
@@ -116,7 +157,73 @@ VHS_LoadVideo → SubtitleDetectorRapidOCR → SubtitleEraserProPainter → VHS_
 3. 使用 `SubtitleEraserProPainter` 擦除字幕
 4. 使用 `VHS_VideoCombine` 保存视频
 
-示例工作流文件位于 `workflows/subtitle_eraser_workflow.json`
+示例工作流文件：`workflows/subtitle_eraser_workflow_vhs.json`
+
+### 高质量工作流 (ProPainter + DiffuEraser)
+
+```
+VHS_LoadVideo → SubtitleDetectorRapidOCR → SubtitleEraserProPainter → SubtitleEraserDiffuEraser → VHS_VideoCombine
+```
+
+1. 使用 `VHS_LoadVideo` 加载视频
+2. 使用 `SubtitleDetectorRapidOCR` 检测字幕区域
+3. 使用 `SubtitleEraserProPainter` 生成基础擦除结果 (priori)
+4. 使用 `SubtitleEraserDiffuEraser` 精修细节
+5. 使用 `VHS_VideoCombine` 保存视频
+
+示例工作流文件：`workflows/subtitle_eraser_workflow_diffueraser.json`
+
+> **注意**：DiffuEraser 精修需要更多显存 (建议 8GB+)，但效果更好
+
+## 参数调优指南
+
+### 字幕检测 (SubtitleDetectorRapidOCR)
+
+| 场景 | 参数调整 |
+|------|----------|
+| 检测不到字幕 | 降低 `confidence_threshold` (0.2-0.25) |
+| 误检太多 (非字幕被检测) | 提高 `confidence_threshold` (0.5-0.6) |
+| 小字幕检测不全 | 提高 `scale_factor` (0.9-1.0) |
+| 大字幕加速处理 | 降低 `scale_factor` (0.6-0.7) |
+| 字幕位置变化大 | 使用 `mask_merge_mode=union` 合并所有帧的 mask |
+| 字幕位置固定 | 使用 `mask_merge_mode=per_frame` 逐帧独立 mask |
+
+### 字幕擦除 (SubtitleEraserProPainter)
+
+| 场景 | 参数调整 |
+|------|----------|
+| 字幕擦除不干净 | 增大 `mask_dilation` (6-8) |
+| 擦除影响周围内容 | 减小 `mask_dilation` (2-3) |
+| 追求更高质量 | 减小 `ref_stride` (5-8)，增大 `raft_iter` (25-30) |
+| 追求更快速度 | 增大 `ref_stride` (15-20)，减小 `raft_iter` (10-15) |
+| 快速运动场景 | 增大 `neighbor_length` (15-20) |
+| 静态/慢速场景 | 减小 `neighbor_length` (5-8) |
+| 显存不足 (OOM) | 减小 `chunk_size` 或设为 0 自动调整 |
+| 显存充足想加速 | 增大 `chunk_size` (20-40) |
+
+### DiffuEraser 精修 (SubtitleEraserDiffuEraser)
+
+| 场景 | 参数调整 |
+|------|----------|
+| 加速推理 | 使用 `pcm_sd15_smallcfg_2step` LoRA，`steps=2` |
+| 更高质量 | 使用 `pcm_sd15_smallcfg_4step` LoRA，`steps=4` |
+| 边缘有字幕残留 | 增大 `mask_dilation` (6-8) |
+| 边缘过渡不自然 | 尝试关闭 `blended` |
+| 背景有特定内容 | 修改 `prompt`，如 "clean wall"、"blue sky" |
+
+### 推荐配置
+
+**高质量配置** (慢但效果好)：
+- ProPainter: `ref_stride=5`, `neighbor_length=15`, `raft_iter=25`
+- DiffuEraser: `lora=pcm_sd15_smallcfg_4step`, `steps=4`
+
+**平衡配置** (默认)：
+- ProPainter: `ref_stride=10`, `neighbor_length=10`, `raft_iter=20`
+- DiffuEraser: `lora=pcm_sd15_smallcfg_2step`, `steps=2`
+
+**快速配置** (追求速度)：
+- 只使用 ProPainter，不使用 DiffuEraser 精修
+- ProPainter: `ref_stride=15`, `neighbor_length=8`, `raft_iter=12`
 
 ## 依赖
 
@@ -139,20 +246,21 @@ psutil>=5.9.0
 comfyui_subtitle_detector/
 ├── __init__.py              # ComfyUI 节点注册入口
 ├── nodes.py                 # SubtitleDetectorRapidOCR 节点实现
-├── eraser_node.py           # SubtitleEraserProPainter 节点实现
+├── eraser_node.py           # SubtitleEraserProPainter + SubtitleEraserDiffuEraser 节点实现
 ├── rapid_ocr_engine.py      # RapidOCR 引擎封装
 ├── frame_renderer.py        # 检测框渲染器
-├── propainter/              # ProPainter 视频修复模型（从 DiffuEraser 复制）
+├── propainter/              # ProPainter 视频修复模型
 │   ├── inference.py         # ProPainter 推理入口
 │   ├── model/               # 模型定义
 │   └── RAFT/                # 光流估计模型
-├── libs/                    # DiffuEraser 相关库（从 ComfyUI_DiffuEraser 复制）
+├── libs/                    # DiffuEraser 相关库
 │   ├── diffueraser.py       # DiffuEraser 封装
 │   └── pipeline_diffueraser.py
-├── sd15_repo/               # Stable Diffusion 1.5 配置文件
+├── sd15_repo/               # SD1.5 配置文件 (tokenizer, text_encoder config)
 ├── workflows/               # 示例工作流
-│   └── subtitle_eraser_workflow.json
-└── web/js/                  # 前端预览脚本
+│   ├── subtitle_eraser_workflow_vhs.json      # 基本工作流
+│   └── subtitle_eraser_workflow_diffueraser.json  # DiffuEraser 精修工作流
+└── load_model.txt           # 模型下载指南
 ```
 
 ## 开发注意事项

@@ -1,0 +1,327 @@
+{
+  "last_node_id": 15,
+  "last_link_id": 16,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "VHS_LoadVideo",
+      "pos": [50, 200],
+      "size": [250, 450],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {"name": "meta_batch", "shape": 7, "type": "VHS_BatchManager", "link": null},
+        {"name": "vae", "shape": 7, "type": "VAE", "link": null}
+      ],
+      "outputs": [
+        {"name": "IMAGE", "type": "IMAGE", "slot_index": 0, "links": [1, 5, 10]},
+        {"name": "frame_count", "type": "INT", "slot_index": 1, "links": null},
+        {"name": "audio", "type": "AUDIO", "slot_index": 2, "links": [8]},
+        {"name": "video_info", "type": "VHS_VIDEOINFO", "slot_index": 3, "links": [9]}
+      ],
+      "title": "1. Load Video",
+      "properties": {"Node name for S&R": "VHS_LoadVideo"},
+      "widgets_values": {
+        "video": "",
+        "force_rate": 0,
+        "custom_width": 0,
+        "custom_height": 0,
+        "frame_load_cap": 0,
+        "skip_first_frames": 0,
+        "select_every_nth": 1,
+        "format": "AnimateDiff",
+        "videopreview": {"hidden": false, "paused": false, "params": {}}
+      }
+    },
+    {
+      "id": 2,
+      "type": "SubtitleDetectorRapidOCR",
+      "pos": [350, 200],
+      "size": [315, 400],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [{"name": "images", "type": "IMAGE", "link": 1}],
+      "outputs": [
+        {"name": "annotated_images", "type": "IMAGE", "slot_index": 0, "links": [12]},
+        {"name": "subtitle_mask", "type": "MASK", "slot_index": 1, "links": [3, 11]}
+      ],
+      "title": "2. Detect Subtitles",
+      "properties": {"Node name for S&R": "SubtitleDetectorRapidOCR"},
+      "widgets_values": [
+        "detect_only",
+        "MOBILE",
+        0.3,
+        0.8,
+        "sharpen",
+        "red_hollow",
+        0,
+        true,
+        "union",
+        6
+      ]
+    },
+    {
+      "id": 3,
+      "type": "SubtitleEraserProPainter",
+      "pos": [720, 200],
+      "size": [315, 350],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 5},
+        {"name": "masks", "type": "MASK", "link": 3}
+      ],
+      "outputs": [
+        {"name": "erased_images", "type": "IMAGE", "slot_index": 0, "links": [6]}
+      ],
+      "title": "3. ProPainter (Priori)",
+      "properties": {"Node name for S&R": "SubtitleEraserProPainter"},
+      "widgets_values": [
+        "ProPainter.pth",
+        "raft-things.pth",
+        "recurrent_flow_completion.pth",
+        4,
+        10,
+        10,
+        80,
+        20,
+        true,
+        0
+      ]
+    },
+    {
+      "id": 4,
+      "type": "SubtitleEraserDiffuEraser",
+      "pos": [1090, 200],
+      "size": [315, 400],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 10},
+        {"name": "masks", "type": "MASK", "link": 11},
+        {"name": "priori_images", "type": "IMAGE", "link": 6}
+      ],
+      "outputs": [
+        {"name": "erased_images", "type": "IMAGE", "slot_index": 0, "links": [7]}
+      ],
+      "title": "4. DiffuEraser (Refine)",
+      "properties": {"Node name for S&R": "SubtitleEraserDiffuEraser"},
+      "widgets_values": [
+        "sd-vae-ft-mse.safetensors",
+        "clip_l.safetensors",
+        "pcm_sd15_smallcfg_2step_converted.safetensors",
+        "clean background, high quality",
+        2,
+        0,
+        4,
+        true
+      ]
+    },
+    {
+      "id": 5,
+      "type": "VHS_VideoCombine",
+      "pos": [1460, 200],
+      "size": [315, 330],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 7},
+        {"name": "audio", "shape": 7, "type": "AUDIO", "link": 8},
+        {"name": "meta_batch", "shape": 7, "type": "VHS_BatchManager", "link": null},
+        {"name": "vae", "shape": 7, "type": "VAE", "link": null},
+        {"name": "frame_rate", "type": "FLOAT", "widget": {"name": "frame_rate"}, "link": 14}
+      ],
+      "outputs": [{"name": "Filenames", "type": "VHS_FILENAMES", "links": null}],
+      "title": "5. Save Video",
+      "properties": {"Node name for S&R": "VHS_VideoCombine"},
+      "widgets_values": {
+        "frame_rate": 24,
+        "loop_count": 0,
+        "filename_prefix": "subtitle_erased",
+        "format": "video/h264-mp4",
+        "pix_fmt": "yuv420p",
+        "crf": 19,
+        "save_metadata": true,
+        "trim_to_audio": false,
+        "pingpong": false,
+        "save_output": true,
+        "videopreview": ""
+      }
+    },
+    {
+      "id": 6,
+      "type": "VHS_VideoInfo",
+      "pos": [50, 700],
+      "size": [235, 200],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [{"name": "video_info", "type": "VHS_VIDEOINFO", "link": 9}],
+      "outputs": [
+        {"name": "source_fps", "type": "FLOAT", "slot_index": 0, "links": [14, 15]},
+        {"name": "source_frame_count", "type": "INT", "slot_index": 1, "links": null},
+        {"name": "source_duration", "type": "FLOAT", "slot_index": 2, "links": null},
+        {"name": "source_width", "type": "INT", "slot_index": 3, "links": null},
+        {"name": "source_height", "type": "INT", "slot_index": 4, "links": null},
+        {"name": "loaded_fps", "type": "FLOAT", "links": null},
+        {"name": "loaded_frame_count", "type": "INT", "links": null},
+        {"name": "loaded_duration", "type": "FLOAT", "links": null},
+        {"name": "loaded_width", "type": "INT", "links": null},
+        {"name": "loaded_height", "type": "INT", "links": null}
+      ],
+      "title": "Video Info",
+      "properties": {"Node name for S&R": "VHS_VideoInfo"},
+      "widgets_values": {}
+    },
+    {
+      "id": 7,
+      "type": "VHS_VideoCombine",
+      "pos": [720, 600],
+      "size": [315, 330],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 12},
+        {"name": "audio", "shape": 7, "type": "AUDIO", "link": null},
+        {"name": "meta_batch", "shape": 7, "type": "VHS_BatchManager", "link": null},
+        {"name": "vae", "shape": 7, "type": "VAE", "link": null},
+        {"name": "frame_rate", "type": "FLOAT", "widget": {"name": "frame_rate"}, "link": 15}
+      ],
+      "outputs": [{"name": "Filenames", "type": "VHS_FILENAMES", "links": null}],
+      "title": "Preview Detection",
+      "properties": {"Node name for S&R": "VHS_VideoCombine"},
+      "widgets_values": {
+        "frame_rate": 24,
+        "loop_count": 0,
+        "filename_prefix": "detection_preview",
+        "format": "video/h264-mp4",
+        "pix_fmt": "yuv420p",
+        "crf": 19,
+        "save_metadata": false,
+        "trim_to_audio": false,
+        "pingpong": false,
+        "save_output": false,
+        "videopreview": ""
+      }
+    },
+    {
+      "id": 10,
+      "type": "Note",
+      "pos": [50, -100],
+      "size": [600, 220],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "DiffuEraser Workflow - No SD1.5 Required",
+      "properties": {},
+      "widgets_values": [
+        "== DiffuEraser 字幕擦除工作流 ==\n\n已移除 SD1.5 完整模型依赖！只需要：\n- VAE: sd-vae-ft-mse.safetensors (models/vae/)\n- CLIP: clip_l.safetensors (models/clip/)\n- LoRA: pcm_sd15_smallcfg_2step (可选，2步加速推理)\n- ProPainter 模型 (models/DiffuEraser/)\n- DiffuEraser 模型 (models/DiffuEraser/brushnet/, unet_main/)\n\n工作流程：\n1. VHS_LoadVideo 加载视频\n2. SubtitleDetectorRapidOCR 检测字幕\n3. SubtitleEraserProPainter 基础擦除 (生成 priori)\n4. SubtitleEraserDiffuEraser 扩散模型精修\n5. VHS_VideoCombine 保存视频"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 11,
+      "type": "Note",
+      "pos": [1090, 650],
+      "size": [500, 300],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "DiffuEraser Parameters",
+      "properties": {},
+      "widgets_values": [
+        "== SubtitleEraserDiffuEraser 参数说明 ==\n\n• vae: VAE 模型文件\n  推荐: sd-vae-ft-mse.safetensors\n\n• clip: CLIP 文本编码器\n  推荐: clip_l.safetensors\n\n• lora: 可选 LoRA 加速\n  - none: 不使用 (steps=4)\n  - pcm_sd15_smallcfg_2step: 2步加速 (steps=2)\n  - pcm_sd15_smallcfg_4step: 4步加速 (steps=4)\n\n• prompt: 描述期望背景的提示词\n\n• steps: 推理步数 (配合 LoRA 调整)\n\n• seed: 随机种子 (0=随机)\n\n• mask_dilation: mask 膨胀像素\n\n• blended: 是否混合原图边缘"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 12,
+      "type": "Note",
+      "pos": [350, 650],
+      "size": [320, 280],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "ProPainter Parameters",
+      "properties": {},
+      "widgets_values": [
+        "== SubtitleEraserProPainter 参数说明 ==\n\n• mask_dilation (0-20, 默认4)\n  mask膨胀像素，扩大擦除区域边缘\n\n• ref_stride (1-50, 默认10)\n  参考帧步长，越小质量越好但越慢\n\n• neighbor_length (2-50, 默认10)\n  邻近帧数量，用于时序一致性\n\n• subvideo_length (10-200, 默认80)\n  子视频长度，长视频会分段处理\n\n• raft_iter (1-40, 默认20)\n  RAFT光流迭代次数\n\n• fp16 (默认True)\n  半精度推理，节省显存\n\n• chunk_size (0-100, 默认0=自动)"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 13,
+      "type": "Note",
+      "pos": [1460, 580],
+      "size": [315, 200],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "License Notice",
+      "properties": {},
+      "widgets_values": [
+        "== 商用许可说明 ==\n\n本插件使用的模型有不同许可证：\n\n• RapidOCR: Apache-2.0 (可商用)\n• ProPainter: 仅限非商业用途\n• DiffuEraser: Apache-2.0\n\n如需商用，请联系 ProPainter 作者获取授权\n\nProPainter 项目地址:\nhttps://github.com/sczhou/ProPainter"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 14,
+      "type": "Note",
+      "pos": [700, -100],
+      "size": [650, 280],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Parameter Tuning Guide / 参数调优指南",
+      "properties": {},
+      "widgets_values": [
+        "== 参数调优指南 ==\n\n【字幕检测调优】\n• confidence_threshold: 检测不到字幕时降低 (0.2)，误检太多时提高 (0.5)\n• scale_factor: 小字幕提高 (0.9-1.0)，大字幕可降低 (0.6-0.7) 加速\n• mask_merge_mode: union=合并所有帧mask，per_frame=逐帧独立mask\n\n【ProPainter 调优】\n• mask_dilation: 擦除不干净时增大 (6-8)，影响周围内容时减小 (2)\n• ref_stride: 追求质量用 5-8，追求速度用 15-20\n• neighbor_length: 快速运动场景增大 (15-20)，静态场景可减小 (5-8)\n• chunk_size: 显存不足时减小，显存充足时增大加速\n\n【DiffuEraser 调优】\n• steps: 配合 LoRA 使用，2step LoRA 用 steps=2，4step LoRA 用 steps=4\n• mask_dilation: 边缘有残留时增大\n• blended: 边缘过渡不自然时关闭试试\n• prompt: 描述期望的背景，如 \"clean wall\" \"blue sky\" 等"
+      ],
+      "color": "#234",
+      "bgcolor": "#345"
+    }
+  ],
+  "links": [
+    [1, 1, 0, 2, 0, "IMAGE"],
+    [3, 2, 1, 3, 1, "MASK"],
+    [5, 1, 0, 3, 0, "IMAGE"],
+    [6, 3, 0, 4, 2, "IMAGE"],
+    [7, 4, 0, 5, 0, "IMAGE"],
+    [8, 1, 2, 5, 1, "AUDIO"],
+    [9, 1, 3, 6, 0, "VHS_VIDEOINFO"],
+    [10, 1, 0, 4, 0, "IMAGE"],
+    [11, 2, 1, 4, 1, "MASK"],
+    [12, 2, 0, 7, 0, "IMAGE"],
+    [14, 6, 0, 5, 4, "FLOAT"],
+    [15, 6, 0, 7, 4, "FLOAT"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.8,
+      "offset": [50, 100]
+    }
+  },
+  "version": 0.4
+}

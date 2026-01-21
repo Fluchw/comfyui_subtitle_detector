@@ -1,63 +1,97 @@
 # DiffuEraser 模型下载指南
 # 所有命令在 ComfyUI 根目录下执行
 
-# ==================== 1. DiffuEraser 主模型 (brushnet + unet_main) ====================
-# 下载到 models/DiffuEraservae/
-modelscope download --model xingzi/diffuEraser --local_dir ./models/DiffuEraservae
+# ==================== 0. 安装 modelscope (首次使用需要) ====================
+pip install modelscope
 
-# ==================== 2. ProPainter 模型 ====================
-# 直接下载到 models/DiffuEraser/ (SubtitleEraserProPainter 节点从这里加载)
+# ==================== 1. ProPainter 模型 (必需) ====================
+# 直接下载到 models/DiffuEraser/
 python custom_nodes/comfyui_subtitle_detector/download_modelscope_multi.py --model Fluchw/propainter --subdir "*.pt" "*.pth" --output ./models/DiffuEraser
 
-# ==================== 3. VAE 模型 ====================
+# ==================== 2. DiffuEraser 主模型 (精修节点需要) ====================
+# 下载 BrushNet + UNet 到 models/DiffuEraser/
+# 方法1: 使用 modelscope (推荐，国内速度快)
+modelscope download --model xingzi/diffuEraser --local_dir ./models/DiffuEraser
+
+# 方法2: 使用 huggingface-cli (国外源)
+# pip install huggingface_hub
+# huggingface-cli download Kijai/DiffuEraser_comfy --local-dir ./models/DiffuEraser
+
+# 方法3: 手动下载
+# 从 https://huggingface.co/Kijai/DiffuEraser_comfy 下载以下文件夹:
+#   - brushnet/ (包含 config.json 和 diffusion_pytorch_model.safetensors)
+#   - unet_main/ (包含 config.json 和 diffusion_pytorch_model.safetensors)
+# 放入 models/DiffuEraser/ 目录
+
+# ==================== 3. VAE 模型 (精修节点需要) ====================
 # 下载到 models/vae/
-modelscope download --model stabilityai/sd-vae-ft-mse diffusion_pytorch_model.safetensors --local_dir ./models/vae/sd-vae-ft-mse
+modelscope download --model stabilityai/sd-vae-ft-mse diffusion_pytorch_model.safetensors --local_dir ./models/vae
+# 重命名为标准格式 (Windows)
+ren models\vae\diffusion_pytorch_model.safetensors sd-vae-ft-mse.safetensors
+# 或 Linux/Mac:
+# mv ./models/vae/diffusion_pytorch_model.safetensors ./models/vae/sd-vae-ft-mse.safetensors
 
-# ==================== 4. PCM LoRA ====================
-# 下载到 models/loras/ (DiffuEraser_Loader 从这里加载)
+# ==================== 4. CLIP 模型 (精修节点需要) ====================
+# 通常 ComfyUI 已有 clip_l.safetensors，如果没有：
+# 从 HuggingFace 下载 openai/clip-vit-large-patch14 的 model.safetensors
+# 重命名为 clip_l.safetensors 放入 models/clip/
+
+# ==================== 5. PCM LoRA (可选，加速推理) ====================
+# 下载到 models/loras/
 python custom_nodes/comfyui_subtitle_detector/download_modelscope_multi.py --model Fluchw/PCM_Weights --subdir sd15 --output ./models/loras
-
-# 或者手动下载后复制:
-# copy models\PCM_Weights\sd15\*.safetensors models\loras\
-
-# ==================== 5. CLIP (可选，ComfyUI 默认已有) ====================
-# modelscope download --model AI-ModelScope/flux_text_encoders clip_l.safetensors --local_dir ./models/clip
 
 # ==================== 模型文件结构 ====================
 # ComfyUI/
 # ├── models/
-# │   ├── DiffuEraser/              # SubtitleEraserProPainter 节点从这里加载
-# │   │   ├── ProPainter.pth        # propainter_model 选这个
-# │   │   ├── raft-things.pth       # raft_model 选这个
-# │   │   └── recurrent_flow_completion.pth  # flow_model 选这个
-# │   │
-# │   ├── DiffuEraservae/           # DiffuEraser 主模型 (精修节点使用)
-# │   │   ├── brushnet/
-# │   │   │   ├── config.json
-# │   │   │   └── diffusion_pytorch_model.safetensors
-# │   │   └── unet_main/
-# │   │       ├── config.json
-# │   │       └── diffusion_pytorch_model.safetensors
+# │   ├── clip/
+# │   │   └── clip_l.safetensors           # CLIP 文本编码器
 # │   │
 # │   ├── vae/
-# │   │   └── sd-vae-ft-mse/
-# │   │       └── diffusion_pytorch_model.safetensors
+# │   │   └── sd-vae-ft-mse.safetensors    # VAE 模型
 # │   │
-# │   └── loras/
-# │       ├── pcm_sd15_smallcfg_2step_converted.safetensors  # 推荐使用
-# │       └── pcm_sd15_*.safetensors  # 其他 PCM LoRA
+# │   ├── loras/
+# │   │   └── pcm_sd15_smallcfg_2step_converted.safetensors  # 可选 PCM LoRA
+# │   │
+# │   └── DiffuEraser/
+# │       ├── ProPainter.pth               # ProPainter 主模型
+# │       ├── raft-things.pth              # RAFT 光流模型
+# │       ├── recurrent_flow_completion.pth # 流补全模型
+# │       ├── brushnet/                    # DiffuEraser BrushNet
+# │       │   ├── config.json
+# │       │   └── diffusion_pytorch_model.safetensors
+# │       └── unet_main/                   # DiffuEraser UNet
+# │           ├── config.json
+# │           └── diffusion_pytorch_model.safetensors
 
 # ==================== 节点配置说明 ====================
-# SubtitleEraserProPainter (字幕擦除主节点):
+
+# SubtitleEraserProPainter (基础擦除节点):
 #   - propainter_model: ProPainter.pth
 #   - raft_model: raft-things.pth
 #   - flow_model: recurrent_flow_completion.pth
-#   - mask_dilation: 4 (mask 膨胀)
-#   - ref_stride: 10 (参考帧间隔)
-#   - neighbor_length: 10 (邻近帧数量)
-#   - subvideo_length: 80 (子视频长度，用于长视频分段处理)
+#   - mask_dilation: 4
+#   - ref_stride: 10
+#   - neighbor_length: 10
+#   - subvideo_length: 80
+#   - raft_iter: 20
+#   - fp16: True
+
+# SubtitleEraserDiffuEraser (精修节点):
+#   - vae: sd-vae-ft-mse.safetensors       # VAE 模型
+#   - clip: clip_l.safetensors             # CLIP 模型 (已移除 SD1.5 依赖!)
+#   - lora: none 或 pcm_sd15_smallcfg_2step_converted.safetensors
+#   - prompt: "clean background, high quality"
+#   - steps: 4 (配合 PCM LoRA 可用 2)
+#   - mask_dilation: 4
+#   - blended: True
+
+# ==================== 重要说明 ====================
 #
-# SubtitleEraserDiffuEraser (精修节点，可选):
-#   - vae: sd-vae-ft-mse/diffusion_pytorch_model.safetensors
-#   - lora: pcm_sd15_smallcfg_2step_converted.safetensors (2步快速)
-#   - steps: 2-4 (配合 PCM LoRA)
+# 已移除对完整 SD1.5 checkpoint 的依赖！
+# 不再需要 v1-5-pruned-emaonly.safetensors 等大模型。
+#
+# 只需要：
+# - clip_l.safetensors (~250MB) - CLIP 文本编码器
+# - sd-vae-ft-mse.safetensors (~335MB) - VAE 图像编码器
+#
+# 这与 ComfyUI_DiffuEraser (smthemex) 的实现方式一致。
