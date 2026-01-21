@@ -29,15 +29,30 @@ ComfyUI 字幕检测与擦除节点，支持视频字幕的自动检测和智能
 
 字幕擦除节点，使用 ProPainter 进行视频修复。
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| propainter_model | ProPainter 模型文件 | ProPainter.pth |
-| raft_model | RAFT 光流模型 | raft-things.pth |
-| flow_model | 流补全模型 | recurrent_flow_completion.pth |
-| mask_dilation | mask 膨胀 | 4 |
-| ref_stride | 参考帧间隔 | 10 |
-| neighbor_length | 邻近帧数量 | 10 |
-| subvideo_length | 子视频长度 | 80 |
+| 参数 | 范围 | 默认值 | 说明 |
+|------|------|--------|------|
+| propainter_model | - | ProPainter.pth | ProPainter 主模型文件 |
+| raft_model | - | raft-things.pth | RAFT 光流模型 |
+| flow_model | - | recurrent_flow_completion.pth | 流补全模型 |
+| mask_dilation | 0-20 | 4 | mask 膨胀像素，扩大擦除区域边缘 |
+| ref_stride | 1-50 | 10 | 参考帧步长，越小质量越好但速度越慢 |
+| neighbor_length | 2-50 | 10 | 邻近帧数量，用于时序一致性 |
+| subvideo_length | 10-200 | 80 | 子视频长度，长视频会被分段处理 |
+| raft_iter | 1-40 | 20 | RAFT 光流迭代次数，越高精度越好但越慢 |
+| fp16 | bool | True | 半精度推理，开启可节省显存 |
+| chunk_size | 0-100 | 0 | 每次处理帧数，0=根据分辨率自动调整 |
+
+#### chunk_size 参数说明
+
+- **chunk_size = 0 (默认)**：自动根据分辨率调整
+  - 4K 以上: 4 帧/chunk
+  - 1080p 以上: 8 帧/chunk
+  - 720p 以上: 12 帧/chunk
+  - 其他: 16 帧/chunk
+
+- **chunk_size = 1~100**：手动指定每次处理的帧数
+  - 如果显存使用率低但 GPU 使用率高，可以增大此值来加速处理
+  - 如果显存不足报错，可以减小此值
 
 ## 安装
 

@@ -241,6 +241,7 @@ class VideoCombine:
     def combine(self, images, frame_rate):
         """
         将图片序列组合为视频并生成预览
+        使用流式处理，逐帧转换以避免内存溢出
 
         Args:
             images: 图片张量 [B, H, W, C]
@@ -248,24 +249,21 @@ class VideoCombine:
         """
         import time
 
+        num_frames = len(images)
+        height, width = images.shape[1:3]
+
         print(f"\n{'='*60}")
         print(f"视频预览")
         print(f"{'='*60}")
-        print(f"帧数: {len(images)}")
+        print(f"帧数: {num_frames}")
         print(f"帧率: {frame_rate} FPS")
-        print(f"分辨率: {images.shape[2]}x{images.shape[1]} (宽x高)")
+        print(f"分辨率: {width}x{height} (宽x高)")
 
         # 创建临时预览文件
         timestamp = int(time.time() * 1000)
         temp_dir = folder_paths.get_temp_directory()
         preview_file = f"preview_{timestamp}.mp4"
         preview_path = os.path.join(temp_dir, preview_file)
-
-        # 转换图片为 numpy 数组 uint8
-        images_np = (images.cpu().numpy() * 255).astype(np.uint8)
-
-        # 获取尺寸
-        height, width = images_np.shape[1:3]
 
         # 尝试使用不同的编码器,按优先级排序
         codecs_to_try = [
@@ -295,11 +293,18 @@ class VideoCombine:
         if out is None or not out.isOpened():
             raise ValueError(f"无法创建预览文件 (所有编码器都失败): {preview_path}")
 
-        # 写入帧
-        for frame in images_np:
+        # 流式写入帧，逐帧转换以避免内存溢出
+        print(f"流式写入视频帧...")
+        for i in range(num_frames):
+            # 逐帧转换：GPU tensor -> CPU numpy -> uint8
+            frame = images[i].cpu().numpy()
+            frame_uint8 = (frame * 255).astype(np.uint8)
             # RGB -> BGR
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            frame_bgr = cv2.cvtColor(frame_uint8, cv2.COLOR_RGB2BGR)
             out.write(frame_bgr)
+
+            if (i + 1) % 100 == 0:
+                print(f"  已写入 {i+1}/{num_frames} 帧...")
 
         out.release()
 
@@ -375,19 +380,16 @@ class SaveVideo:
         file = f"{filename}_{counter:05}_.{format}"
         output_path = os.path.join(full_output_folder, file)
 
+        num_frames = len(images)
+        height, width = images.shape[1:3]
+
         print(f"\n{'='*60}")
         print(f"保存视频")
         print(f"{'='*60}")
         print(f"输出: {output_path}")
-        print(f"帧数: {len(images)}")
+        print(f"帧数: {num_frames}")
         print(f"帧率: {frame_rate} FPS")
         print(f"格式: {format}")
-
-        # 转换图片为 numpy 数组 uint8
-        images_np = (images.cpu().numpy() * 255).astype(np.uint8)
-
-        # 获取尺寸
-        height, width = images_np.shape[1:3]
         print(f"分辨率: {width}x{height}")
 
         # 设置编解码器
@@ -405,14 +407,18 @@ class SaveVideo:
         if not out.isOpened():
             raise ValueError(f"无法创建视频文件: {output_path}")
 
-        # 写入帧
-        for i, frame in enumerate(images_np):
+        # 流式写入帧，逐帧转换以避免内存溢出
+        print(f"流式写入视频帧...")
+        for i in range(num_frames):
+            # 逐帧转换：GPU tensor -> CPU numpy -> uint8
+            frame = images[i].cpu().numpy()
+            frame_uint8 = (frame * 255).astype(np.uint8)
             # RGB -> BGR
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            frame_bgr = cv2.cvtColor(frame_uint8, cv2.COLOR_RGB2BGR)
             out.write(frame_bgr)
 
             if (i + 1) % 100 == 0 or i == 0:
-                print(f"  已写入 {i+1}/{len(images)} 帧...")
+                print(f"  已写入 {i+1}/{num_frames} 帧...")
 
         out.release()
 

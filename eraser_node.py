@@ -8,6 +8,8 @@ ComfyUI Subtitle Eraser Node - 使用 ProPainter + DiffuEraser 进行字幕擦�
 import os
 import gc
 import copy
+import signal
+import atexit
 import torch
 import numpy as np
 from PIL import Image
@@ -135,6 +137,9 @@ class SubtitleEraserProPainter:
                 "ref_stride": ("INT", {"default": 10, "min": 1, "max": 50, "step": 1}),
                 "neighbor_length": ("INT", {"default": 10, "min": 2, "max": 50, "step": 2}),
                 "subvideo_length": ("INT", {"default": 80, "min": 10, "max": 200, "step": 10}),
+                "raft_iter": ("INT", {"default": 20, "min": 1, "max": 40, "step": 1}),
+                "fp16": ("BOOLEAN", {"default": True}),
+                "chunk_size": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),  # 0=自动
             },
         }
 
@@ -144,7 +149,8 @@ class SubtitleEraserProPainter:
     CATEGORY = "SubtitleDetector"
 
     def erase_subtitles(self, images, masks, propainter_model, raft_model, flow_model,
-                       mask_dilation, ref_stride, neighbor_length, subvideo_length):
+                       mask_dilation, ref_stride, neighbor_length, subvideo_length,
+                       raft_iter=20, fp16=True, chunk_size=0):
 
         if propainter_model == "none" or raft_model == "none" or flow_model == "none":
             raise ValueError("Please select all three model files: propainter_model, raft_model, flow_model")
@@ -185,26 +191,33 @@ class SubtitleEraserProPainter:
         print(f"[SubtitleEraser] Processing {batch_size} frames at {new_w}x{new_h}")
 
         # ===== 内存优化：真正的流式处理，不在内存中保留所有帧 =====
-        # 分段处理参数 - 根据分辨率动态调整（更保守的设置）
-        pixels_per_frame = new_w * new_h
-        if pixels_per_frame > 1920 * 1080:
-            chunk_size = min(subvideo_length, 8)   # 超高清：最多8帧
-        elif pixels_per_frame > 1280 * 720:
-            chunk_size = min(subvideo_length, 10)  # 高清（1080p）：最多10帧
-        elif pixels_per_frame > 640 * 480:
-            chunk_size = min(subvideo_length, 16)  # 720p：最多16帧
+        # 分段处理参数
+        if chunk_size > 0:
+            # 用户手动指定 chunk_size
+            actual_chunk_size = min(subvideo_length, chunk_size)
+            print(f"[SubtitleEraser] Using manual chunk_size: {actual_chunk_size}")
         else:
-            chunk_size = min(subvideo_length, 24)  # 标清：最多24帧
+            # 自动根据分辨率动态调整
+            pixels_per_frame = new_w * new_h
+            if pixels_per_frame > 1920 * 1080:
+                actual_chunk_size = min(subvideo_length, 8)   # 超高清：最多8帧
+            elif pixels_per_frame > 1280 * 720:
+                actual_chunk_size = min(subvideo_length, 10)  # 高清（1080p）：最多10帧
+            elif pixels_per_frame > 640 * 480:
+                actual_chunk_size = min(subvideo_length, 16)  # 720p：最多16帧
+            else:
+                actual_chunk_size = min(subvideo_length, 24)  # 标清：最多24帧
+            print(f"[SubtitleEraser] Auto chunk_size: {actual_chunk_size} (based on {new_w}x{new_h})")
 
-        overlap = min(neighbor_length, 2)  # 减少重叠帧数
+        overlap = neighbor_length // 2  # 重叠帧数，与原项目一致
 
         # 计算 chunk 数量
-        if batch_size <= chunk_size:
+        if batch_size <= actual_chunk_size:
             num_chunks = 1
         else:
-            num_chunks = (batch_size + chunk_size - overlap - 1) // (chunk_size - overlap)
+            num_chunks = (batch_size + actual_chunk_size - overlap - 1) // (actual_chunk_size - overlap)
 
-        print(f"[SubtitleEraser] Will process in {num_chunks} chunks (chunk_size={chunk_size}, overlap={overlap})")
+        print(f"[SubtitleEraser] Will process in {num_chunks} chunks (chunk_size={actual_chunk_size}, overlap={overlap})")
 
         # 进度条
         pbar = ProgressBar(batch_size) if HAS_PROGRESS_BAR else None
@@ -221,7 +234,7 @@ class SubtitleEraserProPainter:
             while processed_idx < batch_size:
                 # 计算当前分段范围
                 start_idx = max(0, processed_idx - overlap) if chunk_idx > 0 else 0
-                end_idx = min(batch_size, start_idx + chunk_size)
+                end_idx = min(batch_size, start_idx + actual_chunk_size)
                 chunk_len = end_idx - start_idx
 
                 print(f"[SubtitleEraser] Processing chunk {chunk_idx + 1}/{num_chunks}: frames {start_idx}-{end_idx}")
@@ -256,6 +269,8 @@ class SubtitleEraserProPainter:
                     ref_stride=ref_stride,
                     neighbor_length=min(neighbor_length, chunk_len - 1),
                     subvideo_length=min(subvideo_length, chunk_len),
+                    raft_iter=raft_iter,
+                    fp16=fp16,
                     save_fps=24.0
                 )
 
@@ -469,3 +484,57 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SubtitleEraserProPainter": "Subtitle Eraser (ProPainter)",
     "SubtitleEraserDiffuEraser": "Subtitle Eraser (DiffuEraser Refine)",
 }
+
+
+# ==================== 清理函数 ====================
+def cleanup_models():
+    """清理所有缓存的模型，释放 GPU 资源"""
+    print("[SubtitleEraser] Cleaning up cached models...")
+
+    # 清理 ProPainter 模型
+    if SubtitleEraserProPainter._cached_model is not None:
+        try:
+            del SubtitleEraserProPainter._cached_model
+            SubtitleEraserProPainter._cached_model = None
+            SubtitleEraserProPainter._cached_model_paths = None
+        except:
+            pass
+
+    # 清理 DiffuEraser 模型
+    if SubtitleEraserDiffuEraser._cached_model is not None:
+        try:
+            del SubtitleEraserDiffuEraser._cached_model
+            SubtitleEraserDiffuEraser._cached_model = None
+            SubtitleEraserDiffuEraser._cached_model_paths = None
+        except:
+            pass
+
+    # 强制垃圾回收和清空 CUDA 缓存
+    gc.collect()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+    print("[SubtitleEraser] Cleanup completed.")
+
+
+def signal_handler(signum, frame):
+    """处理中断信号"""
+    print(f"\n[SubtitleEraser] Received signal {signum}, cleaning up...")
+    cleanup_models()
+    # 恢复默认处理并重新发送信号
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
+# 注册退出时清理
+atexit.register(cleanup_models)
+
+# 注册信号处理 (仅在主线程中)
+try:
+    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # kill
+except:
+    # 可能不在主线程中，忽略
+    pass
