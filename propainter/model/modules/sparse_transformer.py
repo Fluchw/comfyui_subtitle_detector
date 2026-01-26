@@ -209,14 +209,14 @@ class SparseWindowAttention(nn.Module):
             pool_x = self.pool_layer(x.view(b*t, new_h, new_w, c).permute(0,3,1,2))
             _, _, p_h, p_w = pool_x.shape
             pool_x = pool_x.permute(0,2,3,1).view(b, t, p_h, p_w, c)
-            # pool_k
-            pool_k = self.key(pool_x).unsqueeze(1).repeat(1, n_wh*n_ww, 1, 1, 1, 1) # [b, n_wh*n_ww, t, p_h, p_w, c]
-            pool_k = pool_k.view(b, n_wh*n_ww, t, p_h, p_w, self.n_head, c_head).permute(0,1,5,2,3,4,6)
+            # pool_k - use expand instead of repeat to save memory
+            pool_k = self.key(pool_x).unsqueeze(1).expand(-1, n_wh*n_ww, -1, -1, -1, -1) # [b, n_wh*n_ww, t, p_h, p_w, c]
+            pool_k = pool_k.contiguous().view(b, n_wh*n_ww, t, p_h, p_w, self.n_head, c_head).permute(0,1,5,2,3,4,6)
             pool_k = pool_k.contiguous().view(b, n_wh*n_ww, self.n_head, t, p_h*p_w, c_head)
             win_k = torch.cat((win_k, pool_k), dim=4)
-            # pool_v
-            pool_v = self.value(pool_x).unsqueeze(1).repeat(1, n_wh*n_ww, 1, 1, 1, 1) # [b, n_wh*n_ww, t, p_h, p_w, c]
-            pool_v = pool_v.view(b, n_wh*n_ww, t, p_h, p_w, self.n_head, c_head).permute(0,1,5,2,3,4,6)
+            # pool_v - use expand instead of repeat to save memory
+            pool_v = self.value(pool_x).unsqueeze(1).expand(-1, n_wh*n_ww, -1, -1, -1, -1) # [b, n_wh*n_ww, t, p_h, p_w, c]
+            pool_v = pool_v.contiguous().view(b, n_wh*n_ww, t, p_h, p_w, self.n_head, c_head).permute(0,1,5,2,3,4,6)
             pool_v = pool_v.contiguous().view(b, n_wh*n_ww, self.n_head, t, p_h*p_w, c_head)
             win_v = torch.cat((win_v, pool_v), dim=4)
 

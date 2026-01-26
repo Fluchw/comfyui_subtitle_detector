@@ -56,11 +56,15 @@ def tensor_to_pil_list(images_tensor, width=None, height=None, start_idx=0, end_
 
     pil_list = []
     for i in range(start_idx, end_idx):
-        img_np = (images_tensor[i].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+        # 优化：减少临时数组创建，直接在原地操作
+        img_np = images_tensor[i].cpu().numpy()
+        img_np = np.clip(img_np * 255, 0, 255).astype(np.uint8)
         pil_img = Image.fromarray(img_np)
         if width and height:
             pil_img = pil_img.resize((width, height), Image.LANCZOS)
         pil_list.append(pil_img)
+        # 显式删除numpy数组，帮助垃圾回收
+        del img_np
     return pil_list
 
 
@@ -71,13 +75,17 @@ def mask_tensor_to_pil_list(mask_tensor, width=None, height=None, start_idx=0, e
 
     pil_list = []
     for i in range(start_idx, end_idx):
-        mask_np = (mask_tensor[i].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+        # 优化：减少临时数组创建
+        mask_np = mask_tensor[i].cpu().numpy()
+        mask_np = np.clip(mask_np * 255, 0, 255).astype(np.uint8)
         pil_img = Image.fromarray(mask_np, mode='L')
         if width and height:
             pil_img = pil_img.resize((width, height), Image.NEAREST)
         # 转换为 RGB 以匹配期望格式
-        pil_img = pil_img.convert('RGB')
-        pil_list.append(pil_img)
+        pil_img_rgb = pil_img.convert('RGB')
+        pil_list.append(pil_img_rgb)
+        # 显式删除临时对象，帮助垃圾回收
+        del mask_np, pil_img
     return pil_list
 
 
@@ -331,20 +339,6 @@ class SubtitleEraserProPainter:
             gc.collect()
             torch.cuda.empty_cache()
 
-            # 如果输出尺寸与原始尺寸不同，调整回原始尺寸
-            if actual_out_h != h or actual_out_w != w:
-                logger.info(f"[SubtitleEraser] Resizing from {actual_out_w}x{actual_out_h} to original {w}x{h}...")
-                resized_tensor = torch.zeros((batch_size, h, w, 3), dtype=torch.float32)
-                for i in range(batch_size):
-                    pil_img = Image.fromarray((output_tensor[i].numpy() * 255).astype(np.uint8))
-                    pil_img = pil_img.resize((w, h), Image.LANCZOS)
-                    resized_tensor[i] = torch.from_numpy(np.array(pil_img).astype(np.float32) / 255.0)
-                    output_tensor[i] = 0  # 释放旧帧内存
-                    if i % 50 == 0:
-                        gc.collect()
-                output_tensor = resized_tensor
-                gc.collect()
-
             logger.info(f"[SubtitleEraser] Done! Output shape: {output_tensor.shape}")
             return (output_tensor,)
 
@@ -596,7 +590,9 @@ class SubtitleEraserDiffuEraser:
 
         # 准备数据
         batch_size = images.shape[0]
-        h, w = images.shape[1], images.shape[2]
+        # 使用 priori_images 的尺寸作为处理尺寸（ProPainter 的输出尺寸）
+        # 这样可以避免将低分辨率的 priori upscale 导致质量损失
+        h, w = priori_images.shape[1], priori_images.shape[2]
         new_h = h - h % 8
         new_w = w - w % 8
 
@@ -650,6 +646,11 @@ class SubtitleEraserDiffuEraser:
             chunk_idx = 0
 
             while processed_idx < batch_size:
+                # 在每个chunk处理前清理显存，避免累积
+                if chunk_idx > 0:
+                    gc.collect()
+                    torch.cuda.empty_cache()
+
                 # 计算当前分段范围
                 start_idx = max(0, processed_idx - overlap) if chunk_idx > 0 else 0
                 end_idx = min(batch_size, start_idx + actual_chunk_size)
@@ -701,6 +702,8 @@ class SubtitleEraserDiffuEraser:
                                 pil_img = pil_img.resize((w, h), Image.LANCZOS)
                             img_np = np.array(pil_img).astype(np.float32) / 255.0
                             output_tensor[out_idx] = torch.from_numpy(img_np)
+                            # 立即删除临时numpy数组，避免累积
+                            del img_np
 
                 # 更新进度
                 if pbar:
@@ -708,6 +711,8 @@ class SubtitleEraserDiffuEraser:
 
                 # 释放当前 chunk 的内存
                 del video_pil, mask_pil, priori_pil, result_pil, chunk_images, chunk_masks, chunk_priori
+                # 多次垃圾回收，确保彻底清理
+                gc.collect()
                 gc.collect()
                 torch.cuda.empty_cache()
 
@@ -780,16 +785,23 @@ def cleanup_models():
     gc.collect()
     gc.collect()
     if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
+        try:
+            torch.cuda.empty_cache()
+            # 移除 synchronize()，避免重启时卡住
+            # torch.cuda.synchronize()
+        except:
+            pass
 
     logger.info("[SubtitleEraser] Cleanup completed.")
 
 
 def signal_handler(signum, frame):
     """处理中断信号"""
-    logger.info(f"[SubtitleEraser] Received signal {signum}, cleaning up...")
-    cleanup_models()
+    try:
+        logger.info(f"[SubtitleEraser] Received signal {signum}, cleaning up...")
+        cleanup_models()
+    except:
+        pass
     # 恢复默认处理并重新发送信号
     signal.signal(signum, signal.SIG_DFL)
     os.kill(os.getpid(), signum)

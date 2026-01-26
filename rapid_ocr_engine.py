@@ -250,16 +250,19 @@ class RapidOCREngine:
         # 初始化 RapidOCR (v3.0+)
         # 注意：即使是仅检测模式，也需要配置识别模型参数
         # 实际是否使用识别模型由调用时的use_det/use_cls/use_rec参数控制
+        # 所有引擎(Det/Cls/Rec)都必须使用TORCH，避免onnxruntime依赖
         params = {
             "Det.engine_type": EngineType.TORCH,
             "Det.lang_type": LangDet.CH,
-            "Det.model_type": model_type_enum,  # 可选模型类型
+            "Det.model_type": model_type_enum,
             "Det.ocr_version": OCRVersion.PPOCRV5,
+            "Cls.engine_type": EngineType.TORCH,
+            "Cls.ocr_version": OCRVersion.PPOCRV5,
             "Rec.engine_type": EngineType.TORCH,
             "Rec.lang_type": LangRec.CH,
-            "Rec.model_type": model_type_enum,  # 可选模型类型
+            "Rec.model_type": model_type_enum,
             "Rec.ocr_version": OCRVersion.PPOCRV5,
-            "Rec.rec_batch_num": rec_batch_num,  # 识别批处理大小
+            "Rec.rec_batch_num": rec_batch_num,
         }
 
         # 如果 use_cuda=True,配置 TORCH 引擎使用 GPU

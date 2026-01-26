@@ -35,6 +35,7 @@ ren models\vae\diffusion_pytorch_model.safetensors sd-vae-ft-mse.safetensors
 # 通常 ComfyUI 已有 clip_l.safetensors，如果没有：
 # 从 HuggingFace 下载 openai/clip-vit-large-patch14 的 model.safetensors
 # 重命名为 clip_l.safetensors 放入 models/clip/
+modelscope download --model muse/sd35_clip_l clip_l.safetensors --local_dir ./models/clip
 
 # ==================== 5. PCM LoRA (可选，加速推理) ====================
 # 下载到 models/loras/

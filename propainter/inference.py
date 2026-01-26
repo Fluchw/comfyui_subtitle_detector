@@ -552,6 +552,10 @@ class Propainter:
                 pred_img = pred_img.cpu().permute(0, 2, 3, 1).numpy() * 255
                 binary_masks = masks_dilated_ori[0, neighbor_ids, :, :, :].cpu().permute(
                     0, 2, 3, 1).numpy().astype(np.uint8)  # use original mask
+
+                # 立即释放GPU上的张量，避免显存累积
+                torch.cuda.empty_cache()
+
                 for i in range(len(neighbor_ids)):
                     idx = neighbor_ids[i]
                     img = np.array(pred_img[i]).astype(np.uint8) * binary_masks[i] \

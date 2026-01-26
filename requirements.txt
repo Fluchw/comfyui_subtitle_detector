@@ -1,4 +1,4 @@
-rapidocr>=3.0.0
+rapidocr==3.3.0
 opencv-python>=4.8.0
 numpy>=1.24.0
 torch>=2.0.0
@@ -6,3 +6,14 @@ torchvision>=0.15.0
 scipy>=1.10.0
 tqdm>=4.65.0
 psutil>=5.9.0
+matplotlib
+# ProPainter 需要
+matplotlib
+imageio
+imageio-ffmpeg
+einops
+# DiffuEraser 需要 (diffusers 相关)
+diffusers>=0.25.0
+transformers>=4.30.0
+accelerate>=0.20.0
+safetensors>=0.3.0
