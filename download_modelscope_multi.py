@@ -51,9 +51,9 @@ def main():
     # 自动标准化每个 pattern
     allow_patterns = [normalize_pattern(p) for p in args.subdir]
 
-    print(f"📥 Model: {args.model}")
-    print(f"📂 Patterns: {allow_patterns}")
-    print(f"💾 Output: {args.output}")
+    print(f"[ModelScope] Model: {args.model}")
+    print(f"[ModelScope] Patterns: {allow_patterns}")
+    print(f"[ModelScope] Output: {args.output}")
 
     try:
         snapshot_download(
@@ -62,9 +62,9 @@ def main():
             revision=args.revision,
             allow_patterns=allow_patterns
         )
-        print("✅ Download completed!")
+        print("[ModelScope] Download completed!")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[ModelScope] Error: {e}")
 
 
 if __name__ == "__main__":
