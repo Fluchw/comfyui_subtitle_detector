@@ -411,19 +411,9 @@ class SubtitleEraserProPainter:
 
         logger.info(f"[SubtitleEraser] Processing {batch_size} frames at {new_w}x{new_h}")
 
-        # ===== 内存优化：根据分辨率自动调整分块大小 =====
-        # 根据分辨率动态调整 chunk 大小，但不超过 subvideo_length
-        pixels_per_frame = new_w * new_h
-        if pixels_per_frame > 1920 * 1080:
-            actual_chunk_size = min(subvideo_length, 8)   # 超高清：最多8帧
-        elif pixels_per_frame > 1280 * 720:
-            actual_chunk_size = min(subvideo_length, 10)  # 高清（1080p）：最多10帧
-        elif pixels_per_frame > 640 * 480:
-            actual_chunk_size = min(subvideo_length, 16)  # 720p：最多16帧
-        else:
-            actual_chunk_size = min(subvideo_length, 24)  # 标清：最多24帧
-
-        logger.info(f"[SubtitleEraser] Chunk size: {actual_chunk_size} (subvideo_length={subvideo_length}, resolution={new_w}x{new_h})")
+        # 直接使用 subvideo_length 作为 chunk 大小
+        actual_chunk_size = subvideo_length
+        logger.info(f"[SubtitleEraser] Using subvideo_length: {actual_chunk_size}")
 
         overlap = neighbor_length // 2  # 重叠帧数，与原项目一致
 
