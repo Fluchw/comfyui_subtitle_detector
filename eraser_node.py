@@ -339,10 +339,10 @@ class SubtitleEraserProPainter:
                 "mask_dilation": ("INT", {"default": 4, "min": 0, "max": 20, "step": 1}),
                 "ref_stride": ("INT", {"default": 10, "min": 1, "max": 50, "step": 1}),
                 "neighbor_length": ("INT", {"default": 10, "min": 2, "max": 50, "step": 2}),
-                "subvideo_length": ("INT", {"default": 80, "min": 10, "max": 200, "step": 10}),
+                "subvideo_length": ("INT", {"default": 80, "min": 10, "max": 200, "step": 1,
+                    "tooltip": "子视频长度，控制每次处理的帧数。较小的值可以节省显存但可能影响质量。"}),
                 "raft_iter": ("INT", {"default": 20, "min": 1, "max": 40, "step": 1}),
                 "fp16": ("BOOLEAN", {"default": True}),
-                "chunk_size": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),  # 0=自动
             },
         }
 
@@ -353,7 +353,7 @@ class SubtitleEraserProPainter:
 
     def erase_subtitles(self, images, masks, propainter_model, raft_model, flow_model,
                        mask_dilation, ref_stride, neighbor_length, subvideo_length,
-                       raft_iter=20, fp16=True, chunk_size=0):
+                       raft_iter=20, fp16=True):
 
         # ===== 自动下载模型 =====
         # 获取模型目录（优先使用 propainter 目录）
@@ -411,24 +411,19 @@ class SubtitleEraserProPainter:
 
         logger.info(f"[SubtitleEraser] Processing {batch_size} frames at {new_w}x{new_h}")
 
-        # ===== 内存优化：真正的流式处理，不在内存中保留所有帧 =====
-        # 分段处理参数
-        if chunk_size > 0:
-            # 用户手动指定 chunk_size
-            actual_chunk_size = min(subvideo_length, chunk_size)
-            logger.info(f"[SubtitleEraser] Using manual chunk_size: {actual_chunk_size}")
+        # ===== 内存优化：根据分辨率自动调整分块大小 =====
+        # 根据分辨率动态调整 chunk 大小，但不超过 subvideo_length
+        pixels_per_frame = new_w * new_h
+        if pixels_per_frame > 1920 * 1080:
+            actual_chunk_size = min(subvideo_length, 8)   # 超高清：最多8帧
+        elif pixels_per_frame > 1280 * 720:
+            actual_chunk_size = min(subvideo_length, 10)  # 高清（1080p）：最多10帧
+        elif pixels_per_frame > 640 * 480:
+            actual_chunk_size = min(subvideo_length, 16)  # 720p：最多16帧
         else:
-            # 自动根据分辨率动态调整
-            pixels_per_frame = new_w * new_h
-            if pixels_per_frame > 1920 * 1080:
-                actual_chunk_size = min(subvideo_length, 8)   # 超高清：最多8帧
-            elif pixels_per_frame > 1280 * 720:
-                actual_chunk_size = min(subvideo_length, 10)  # 高清（1080p）：最多10帧
-            elif pixels_per_frame > 640 * 480:
-                actual_chunk_size = min(subvideo_length, 16)  # 720p：最多16帧
-            else:
-                actual_chunk_size = min(subvideo_length, 24)  # 标清：最多24帧
-            logger.info(f"[SubtitleEraser] Auto chunk_size: {actual_chunk_size} (based on {new_w}x{new_h})")
+            actual_chunk_size = min(subvideo_length, 24)  # 标清：最多24帧
+
+        logger.info(f"[SubtitleEraser] Chunk size: {actual_chunk_size} (subvideo_length={subvideo_length}, resolution={new_w}x{new_h})")
 
         overlap = neighbor_length // 2  # 重叠帧数，与原项目一致
 
@@ -697,7 +692,8 @@ class SubtitleEraserDiffuEraser:
         with torch.no_grad():
             prompt_embeds = clip_model(text_input_ids)[0]
 
-        prompt_embeds = prompt_embeds.to(dtype=torch.float16)
+        # 确保 embeddings 在正确的设备上（CUDA）并且是 float16
+        prompt_embeds = prompt_embeds.to(device=device, dtype=torch.float16)
 
         # 返回格式与 ComfyUI CONDITIONING 兼容: [[embeds, {}]]
         return [[prompt_embeds, {}]]
@@ -733,11 +729,6 @@ class SubtitleEraserDiffuEraser:
 
         positive = self._encode_prompt(prompt, clip_model, tokenizer, device)
         logger.info(f"[SubtitleEraser DiffuEraser] Prompt encoded: '{prompt[:50]}...'")
-
-        # 释放 CLIP 显存 (编码完成后不再需要)
-        clip_model.to("cpu")
-        gc.collect()
-        torch.cuda.empty_cache()
 
         # 检查缓存 - 包含 group offloading 参数
         current_config = (vae_path, lora_path, unet_group, brushnet_group)
