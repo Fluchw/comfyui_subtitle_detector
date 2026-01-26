@@ -49,6 +49,143 @@ from .propainter.model.misc import get_device
 from .libs.diffueraser import DiffuEraser
 
 
+# ===== ProPainter 模型自动下载功能 =====
+def check_model_exists(model_dir, model_name):
+    """检查模型文件是否存在"""
+    model_path = os.path.join(model_dir, model_name)
+    return os.path.exists(model_path) and os.path.getsize(model_path) > 0
+
+
+def ensure_modelscope_installed():
+    """确保 modelscope 已安装"""
+    try:
+        import modelscope
+        return True
+    except ImportError:
+        logger.warning("[ModelDownloader] modelscope not found, installing...")
+        try:
+            import subprocess
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "modelscope"])
+            logger.info("[ModelDownloader] ✅ modelscope installed successfully")
+            return True
+        except Exception as e:
+            logger.error(f"[ModelDownloader] ❌ Failed to install modelscope: {e}")
+            return False
+
+
+def download_propainter_models(model_dir):
+    """
+    使用 download_modelscope_multi.py 脚本下载 ProPainter 模型
+
+    Args:
+        model_dir: 模型保存目录
+    """
+    # 确保 modelscope 已安装
+    if not ensure_modelscope_installed():
+        raise RuntimeError("Failed to install modelscope. Please install manually: pip install modelscope")
+
+    # 创建目录
+    os.makedirs(model_dir, exist_ok=True)
+
+    # 获取下载脚本路径
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    download_script = os.path.join(current_dir, "download_modelscope_multi.py")
+
+    if not os.path.exists(download_script):
+        raise FileNotFoundError(f"Download script not found: {download_script}")
+
+    logger.info(f"[ModelDownloader] Downloading ProPainter models from ModelScope...")
+    logger.info(f"[ModelDownloader] Model ID: Fluchw/propainter")
+    logger.info(f"[ModelDownloader] Target directory: {model_dir}")
+
+    try:
+        import subprocess
+        # 调用下载脚本
+        cmd = [
+            sys.executable,
+            download_script,
+            "--model", "Fluchw/propainter",
+            "--subdir", "*.pt", "*.pth",
+            "--output", model_dir
+        ]
+
+        logger.info(f"[ModelDownloader] Running command: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True
+        )
+
+        # 输出下载日志
+        if result.stdout:
+            logger.info(f"[ModelDownloader] {result.stdout}")
+
+        logger.info("[ModelDownloader] ✅ Download completed!")
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"[ModelDownloader] ❌ Download script failed: {e}")
+        if e.stderr:
+            logger.error(f"[ModelDownloader] Error output: {e.stderr}")
+        raise
+    except Exception as e:
+        logger.error(f"[ModelDownloader] ❌ Failed to download from ModelScope: {e}")
+        raise
+
+
+def download_diffueraser_models(model_dir):
+    """
+    使用 modelscope 命令下载 DiffuEraser 模型 (brushnet + unet_main)
+
+    Args:
+        model_dir: 模型保存目录
+    """
+    # 确保 modelscope 已安装
+    if not ensure_modelscope_installed():
+        raise RuntimeError("Failed to install modelscope. Please install manually: pip install modelscope")
+
+    # 创建目录
+    os.makedirs(model_dir, exist_ok=True)
+
+    logger.info(f"[ModelDownloader] Downloading DiffuEraser models from ModelScope...")
+    logger.info(f"[ModelDownloader] Model ID: xingzi/diffuEraser")
+    logger.info(f"[ModelDownloader] Target directory: {model_dir}")
+
+    try:
+        import subprocess
+        # 使用 modelscope download 命令下载
+        cmd = [
+            "modelscope", "download",
+            "--model", "xingzi/diffuEraser",
+            "--local_dir", model_dir
+        ]
+
+        logger.info(f"[ModelDownloader] Running command: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True
+        )
+
+        # 输出下载日志
+        if result.stdout:
+            logger.info(f"[ModelDownloader] {result.stdout}")
+
+        logger.info("[ModelDownloader] ✅ DiffuEraser models downloaded!")
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"[ModelDownloader] ❌ Download failed: {e}")
+        if e.stderr:
+            logger.error(f"[ModelDownloader] Error output: {e.stderr}")
+        raise
+    except Exception as e:
+        logger.error(f"[ModelDownloader] ❌ Failed to download DiffuEraser: {e}")
+        raise
+
+
 def tensor_to_pil_list(images_tensor, width=None, height=None, start_idx=0, end_idx=None):
     """将 ComfyUI tensor [B,H,W,C] 转换为 PIL Image 列表 - 支持分段处理"""
     if end_idx is None:
@@ -113,9 +250,41 @@ def pil_list_to_tensor(pil_list):
 
 
 # ===== 模型路径设置 =====
-DiffuEraser_weights_path = os.path.join(folder_paths.models_dir, "DiffuEraser")
-if not os.path.exists(DiffuEraser_weights_path):
-    os.makedirs(DiffuEraser_weights_path)
+def find_diffueraser_weights_path():
+    """
+    查找包含 DiffuEraser 模型的目录
+    检查所有可能的路径,找到包含 brushnet 和 unet_main 子文件夹的目录
+    """
+    # 获取所有可能的 DiffuEraser 模型路径
+    possible_paths = []
+
+    # 1. 从 folder_paths 获取已注册的路径
+    if hasattr(folder_paths, 'folder_names_and_paths'):
+        # 检查是否有 DiffuEraser 相关的路径
+        for folder_name, (paths, _) in folder_paths.folder_names_and_paths.items():
+            for path in paths:
+                if 'DiffuEraser' in path or 'diffueraser' in path.lower():
+                    possible_paths.append(path)
+
+    # 2. 添加标准路径
+    possible_paths.append(os.path.join(folder_paths.models_dir, "DiffuEraser"))
+
+    # 3. 检查每个路径是否包含必需的子文件夹
+    for path in possible_paths:
+        if os.path.exists(path):
+            brushnet_path = os.path.join(path, "brushnet", "config.json")
+            unet_path = os.path.join(path, "unet_main", "config.json")
+            if os.path.exists(brushnet_path) and os.path.exists(unet_path):
+                logger.info(f"[DiffuEraser] Found models at: {path}")
+                return path
+
+    # 4. 如果都不存在,返回默认路径
+    default_path = os.path.join(folder_paths.models_dir, "DiffuEraser")
+    os.makedirs(default_path, exist_ok=True)
+    logger.warning(f"[DiffuEraser] No existing models found, using default path: {default_path}")
+    return default_path
+
+DiffuEraser_weights_path = find_diffueraser_weights_path()
 
 # 当前节点路径
 current_node_path = os.path.dirname(os.path.abspath(__file__))
@@ -137,21 +306,34 @@ class SubtitleEraserProPainter:
 
     @classmethod
     def INPUT_TYPES(cls):
-        # 获取可用的模型文件列表
-        model_files = ["none"]
-        if os.path.exists(DiffuEraser_weights_path):
-            files = os.listdir(DiffuEraser_weights_path)
-            model_files += [f for f in files if f.endswith(('.pth', '.pt', '.safetensors'))]
+        # 使用 folder_paths API 获取模型列表，支持自定义路径
+        propainter_files = folder_paths.get_filename_list("propainter")
+        raft_files = folder_paths.get_filename_list("raft")
+        flow_files = folder_paths.get_filename_list("flow_completion")
+
+        # 如果模型不存在，添加默认模型名称到列表中（用于自动下载）
+        default_models = {
+            "propainter": "ProPainter.pth",
+            "raft": "raft-things.pth",
+            "flow": "recurrent_flow_completion.pth"
+        }
+
+        if default_models["propainter"] not in propainter_files:
+            propainter_files = [default_models["propainter"]] + propainter_files
+        if default_models["raft"] not in raft_files:
+            raft_files = [default_models["raft"]] + raft_files
+        if default_models["flow"] not in flow_files:
+            flow_files = [default_models["flow"]] + flow_files
 
         return {
             "required": {
                 "images": ("IMAGE",),
                 "masks": ("MASK",),
 
-                # ProPainter 模型文件
-                "propainter_model": (model_files, {"default": "ProPainter.pth" if "ProPainter.pth" in model_files else "none"}),
-                "raft_model": (model_files, {"default": "raft-things.pth" if "raft-things.pth" in model_files else "none"}),
-                "flow_model": (model_files, {"default": "recurrent_flow_completion.pth" if "recurrent_flow_completion.pth" in model_files else "none"}),
+                # ProPainter 模型文件 - 现在支持从多个路径读取和自动下载
+                "propainter_model": (propainter_files, {"default": default_models["propainter"]}),
+                "raft_model": (raft_files, {"default": default_models["raft"]}),
+                "flow_model": (flow_files, {"default": default_models["flow"]}),
 
                 # 处理参数
                 "mask_dilation": ("INT", {"default": 4, "min": 0, "max": 20, "step": 1}),
@@ -173,17 +355,35 @@ class SubtitleEraserProPainter:
                        mask_dilation, ref_stride, neighbor_length, subvideo_length,
                        raft_iter=20, fp16=True, chunk_size=0):
 
-        if propainter_model == "none" or raft_model == "none" or flow_model == "none":
-            raise ValueError("Please select all three model files: propainter_model, raft_model, flow_model")
+        # ===== 自动下载模型 =====
+        # 获取模型目录（优先使用 propainter 目录）
+        propainter_models_dir = os.path.join(folder_paths.models_dir, "propainter")
 
-        # 获取模型路径
-        propainter_path = os.path.join(DiffuEraser_weights_path, propainter_model)
-        raft_path = os.path.join(DiffuEraser_weights_path, raft_model)
-        flow_path = os.path.join(DiffuEraser_weights_path, flow_model)
+        # 检查是否需要下载模型
+        need_download = False
+        for model_name in [propainter_model, raft_model, flow_model]:
+            if not check_model_exists(propainter_models_dir, model_name):
+                need_download = True
+                break
+
+        # 如果有缺失的模型，自动下载
+        if need_download:
+            logger.info("[SubtitleEraser] Some models are missing, starting auto-download...")
+            try:
+                download_propainter_models(propainter_models_dir)
+                logger.info("[SubtitleEraser] ✅ All models downloaded successfully!")
+            except Exception as e:
+                logger.error(f"[SubtitleEraser] ❌ Failed to download models: {e}")
+                raise ValueError(f"Failed to download ProPainter models. Please check your internet connection or download manually from ModelScope: Fluchw/propainter")
+
+        # 使用 folder_paths API 获取模型的完整路径（支持自定义路径）
+        propainter_path = folder_paths.get_full_path("propainter", propainter_model)
+        raft_path = folder_paths.get_full_path("raft", raft_model)
+        flow_path = folder_paths.get_full_path("flow_completion", flow_model)
 
         # 检查模型是否存在
         for path, name in [(propainter_path, "ProPainter"), (raft_path, "RAFT"), (flow_path, "Flow")]:
-            if not os.path.exists(path):
+            if path is None or not os.path.exists(path):
                 raise FileNotFoundError(f"{name} model not found: {path}")
 
         device = get_device()

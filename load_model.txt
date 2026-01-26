@@ -1,3 +1,13 @@
+python custom_nodes/comfyui_subtitle_detector/download_modelscope_multi.py --model Fluchw/propainter --subdir "*.pt" "*.pth" --output ./models/DiffuEraser
+modelscope download --model xingzi/diffuEraser --local_dir /root/autodl-tmp/models/DiffuEraser
+modelscope download --model stabilityai/sd-vae-ft-mse diffusion_pytorch_model.safetensors --local_dir /root/autodl-tmp/models/vae
+python custom_nodes/comfyui_subtitle_detector/download_modelscope_multi.py --model Fluchw/PCM_Weights --subdir sd15 --output /root/autodl-tmp/models/loras
+modelscope download --model muse/sd35_clip_l clip_l.safetensors --local_dir /root/autodl-tmp/models/clip
+
+
+
+
+
 # DiffuEraser 模型下载指南
 # 所有命令在 ComfyUI 根目录下执行
 
