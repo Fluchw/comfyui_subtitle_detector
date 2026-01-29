@@ -32,19 +32,56 @@ MaxSideThresh = 960
 
 
 # resize frames
-def resize_frames(frames, size=None):    
+def resize_frames(frames, size=None, pad_to_multiple=True):
+    """
+    调整帧尺寸到8的倍数
+
+    Args:
+        frames: 帧列表
+        size: 目标尺寸 (width, height)
+        pad_to_multiple: True=使用padding填充, False=使用resize缩放
+
+    Returns:
+        (frames, process_size, out_size, pad_info)
+        pad_info: (pad_right, pad_bottom) 填充的像素数
+    """
     if size is not None:
         out_size = size
-        process_size = (out_size[0]-out_size[0]%8, out_size[1]-out_size[1]%8)
-        if not out_size == process_size:
-            frames = [f.resize(process_size) for f in frames]
-            
     else:
         out_size = frames[0].size
-        process_size = (out_size[0]-out_size[0]%8, out_size[1]-out_size[1]%8)
-        if not out_size == process_size:
-            frames = [f.resize(process_size) for f in frames]       
-    return frames, process_size, out_size
+
+    # 计算需要调整到8的倍数
+    target_w = out_size[0] - out_size[0] % 8
+    target_h = out_size[1] - out_size[1] % 8
+
+    # 如果已经是8的倍数，不需要处理
+    if out_size[0] == target_w and out_size[1] == target_h:
+        return frames, out_size, out_size, (0, 0)
+
+    if pad_to_multiple:
+        # 方法1: Padding填充（无损）
+        # 计算需要填充的像素数（向上取整到8的倍数）
+        pad_w = (8 - out_size[0] % 8) % 8
+        pad_h = (8 - out_size[1] % 8) % 8
+
+        if pad_w > 0 or pad_h > 0:
+            from PIL import ImageOps
+            # 在右侧和底部填充黑边
+            frames = [ImageOps.expand(f, border=(0, 0, pad_w, pad_h), fill=0) for f in frames]
+            process_size = (out_size[0] + pad_w, out_size[1] + pad_h)
+            print(f"[ProPainter] Padding: {out_size[0]}x{out_size[1]} → {process_size[0]}x{process_size[1]} (pad_right={pad_w}, pad_bottom={pad_h})")
+        else:
+            process_size = out_size
+
+        return frames, process_size, out_size, (pad_w, pad_h)
+    else:
+        # 方法2: Resize缩放（有损，原逻辑）
+        process_size = (target_w, target_h)
+        if out_size != process_size:
+            frames = [f.resize(process_size) for f in frames]
+            print(f"[ProPainter] Resize: {out_size[0]}x{out_size[1]} → {process_size[0]}x{process_size[1]}")
+
+        return frames, process_size, out_size, (0, 0)
 
 #  read frames from video
 def read_frame_from_videos(frame_root, video_length):
@@ -198,7 +235,7 @@ class Propainter:
 
     def forward(self, video, mask,load_videobypath=False, resize_ratio=1.0, video_length=2, height=-1, width=-1,
                 mask_dilation=4, ref_stride=10, neighbor_length=10, subvideo_length=80,
-                raft_iter=20, save_fps=24.0, fp16=True):
+                raft_iter=20, save_fps=24.0, fp16=True, progress_callback=None):
         
         # Use fp16 precision during inference to reduce running memory cost
         use_half = True if fp16 else False 
@@ -221,19 +258,22 @@ class Propainter:
         if not width == -1 and not height == -1:
             size = (width, height)
 
-        longer_edge = max(size[0], size[1])
-        if(longer_edge > MaxSideThresh): 
-            print('input video size is too large, resize to', MaxSideThresh)
-            scale = MaxSideThresh / longer_edge
-            resize_ratio = resize_ratio * scale
+        # 禁用自动缩放到960的逻辑，保留用户输入的尺寸
+        # longer_edge = max(size[0], size[1])
+        # if(longer_edge > MaxSideThresh):
+        #     print('input video size is too large, resize to', MaxSideThresh)
+        #     scale = MaxSideThresh / longer_edge
+        #     resize_ratio = resize_ratio * scale
+
+        # 保留手动指定resize_ratio的支持
         if  resize_ratio < 1.0: # if longer_edge>960 resize to 960
             origin_size = (int(resize_ratio * size[0]), int(resize_ratio * size[1]))
-            frames, size, out_size = resize_frames(frames, origin_size) 
-            mask,size_,out_size_=resize_frames(mask, origin_size)
+            frames, size, out_size, pad_info = resize_frames(frames, origin_size)
+            mask, size_, out_size_, pad_info_ = resize_frames(mask, origin_size)
         else:
             origin_size = size
-            frames, size, out_size = resize_frames(frames, origin_size)
-            mask,size_,out_size_ = resize_frames(mask, origin_size)
+            frames, size, out_size, pad_info = resize_frames(frames, origin_size)
+            mask, size_, out_size_, pad_info_ = resize_frames(mask, origin_size)
 
         origin_frames=frames.copy()
         origin_masks=mask.copy()
@@ -525,10 +565,11 @@ class Propainter:
             ref_num = subvideo_length // ref_stride
         else:
             ref_num = -1
-        
+
         torch.cuda.empty_cache()
         # ---- feature propagation + transformer ----
-        for f in tqdm(range(0, video_length, neighbor_stride)):
+        # 移除tqdm，使用回调机制实时更新外层进度条
+        for f in range(0, video_length, neighbor_stride):
             neighbor_ids = [
                 i for i in range(max(0, f - neighbor_stride),
                                     min(video_length, f + neighbor_stride + 1))
@@ -562,24 +603,38 @@ class Propainter:
                         + ori_frames_inp[idx] * (1 - binary_masks[i])
                     if comp_frames[idx] is None:
                         comp_frames[idx] = img
-                    else: 
+                    else:
                         comp_frames[idx] = comp_frames[idx].astype(np.float32) * 0.5 + img.astype(np.float32) * 0.5
-                        
+
                     comp_frames[idx] = comp_frames[idx].astype(np.uint8)
-            
+
+                    # 调用回调函数，实时更新进度
+                    if progress_callback is not None:
+                        progress_callback()
+
             torch.cuda.empty_cache()
 
         ##save composed video##
 
         #comp_frames = [cv2.resize(f, out_size) for f in comp_frames]
-        pil_frames =  [Image.fromarray(f) for f in comp_frames]
+        pil_frames = [Image.fromarray(f) for f in comp_frames]
+
+        # 裁剪掉padding的部分（如果有）
+        if pad_info[0] > 0 or pad_info[1] > 0:
+            pad_w, pad_h = pad_info
+            # 裁剪掉右侧和底部的padding
+            original_w = pil_frames[0].size[0] - pad_w
+            original_h = pil_frames[0].size[1] - pad_h
+            pil_frames = [f.crop((0, 0, original_w, original_h)) for f in pil_frames]
+            print(f"[ProPainter] Cropped padding: {pil_frames[0].size[0]+pad_w}x{pil_frames[0].size[1]+pad_h} → {original_w}x{original_h}")
+
         # writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"),
         #                         fps, (comp_frames[0].shape[1],comp_frames[0].shape[0]))
         # for f in range(video_length):
         #     frame = comp_frames[f].astype(np.uint8)
         #     writer.write(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         # writer.release()
-       
+
         # torch.cuda.empty_cache()
 
         return pil_frames

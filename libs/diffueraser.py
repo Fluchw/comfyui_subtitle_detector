@@ -350,7 +350,7 @@ class DiffuEraser:
         ##############################################
         # DiffuEraser inference
         ##############################################
-        print("DiffuEraser inference...")
+        print(f"[DiffuEraser] Starting inference for {n_total_frames} frames...")
         if seed is None:
             generator = None
         else:
@@ -408,21 +408,23 @@ class DiffuEraser:
             latents_pre = torch.stack([latents[i] for i in sample_index])
 
             ## add proiri
-            noisy_latents_pre = self.noise_scheduler.add_noise(latents_pre, noise_pre, timesteps) 
+            noisy_latents_pre = self.noise_scheduler.add_noise(latents_pre, noise_pre, timesteps)
             latents_pre = noisy_latents_pre
 
+            print(f"[DiffuEraser] Pre-inference: processing {len(sample_index)} sampled frames...")
             with torch.no_grad():
                 latents_pre_out = self.pipeline(
-                    num_frames=nframes, 
-                    prompt=None, 
-                    images=validation_images_input_pre, 
-                    masks=validation_masks_input_pre, 
-                    prompt_embeds=positive[0][0], 
-                    num_inference_steps=num_inference_steps_final, 
+                    num_frames=nframes,
+                    prompt=None,
+                    images=validation_images_input_pre,
+                    masks=validation_masks_input_pre,
+                    prompt_embeds=positive[0][0],
+                    num_inference_steps=num_inference_steps_final,
                     generator=generator,
                     guidance_scale=guidance_scale_final,
                     latents=latents_pre,
                 ).latents
+            print(f"[DiffuEraser] Pre-inference completed")
             torch.cuda.empty_cache()  
 
             def decode_latents(latents, weight_dtype):

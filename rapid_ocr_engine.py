@@ -4,11 +4,36 @@
 RapidOCR 引擎模块 - 负责文字检测和识别
 """
 
+import os
+import time
+from datetime import datetime
 from typing import List, Literal, Optional, Tuple
 
 import cv2
 import numpy as np
+from loguru import logger
 from rapidocr import RapidOCR, EngineType, OCRVersion, LangDet, LangRec, ModelType
+
+# ===== 设置 loguru 日志 =====
+_log_dir = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(_log_dir, exist_ok=True)
+_log_file = os.path.join(_log_dir, f"ocr_timing_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+
+# 添加文件 handler，只记录计时日志
+logger.add(
+    _log_file,
+    filter=lambda record: record["extra"].get("timing", False),
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {message}",
+    rotation="10 MB",
+    retention="7 days",
+    encoding="utf-8",
+)
+
+
+# 创建专门的计时 logger
+timing_logger = logger.bind(timing=True)
+
+print(f"[RapidOCR] 计时日志保存到: {_log_file}")
 
 
 class ImageEnhancer:
@@ -423,6 +448,9 @@ class RapidOCREngine:
             boxes: 文字框坐标列表
             detections: 检测结果列表 [{"bbox": [...], "text": "...", "confidence": 0.9}, ...]
         """
+        # ===== 计时：预处理（缩放） =====
+        t_scale_start = time.perf_counter()
+
         # 先缩放（如果需要）
         if self.scale_factor < 1.0:
             h, w = frame.shape[:2]
@@ -432,9 +460,25 @@ class RapidOCREngine:
         else:
             process_frame = frame
 
+        t_scale_end = time.perf_counter()
+        scale_time = (t_scale_end - t_scale_start) * 1000
+
+        # ===== 计时：预处理（图像增强） =====
+        t_enhance_start = time.perf_counter()
+
         # 再进行图像增强
         if self.enhance_mode:
             process_frame = self.enhancer.enhance(process_frame, self.enhance_mode)
+
+        t_enhance_end = time.perf_counter()
+        enhance_time = (t_enhance_end - t_enhance_start) * 1000
+
+        # 打印预处理计时（同时输出到终端和日志文件）
+        orig_h, orig_w = frame.shape[:2]
+        proc_h, proc_w = process_frame.shape[:2]
+        preprocess_msg = f"预处理 {orig_w}x{orig_h} -> {proc_w}x{proc_h} | 缩放: {scale_time:.1f}ms | 增强: {enhance_time:.1f}ms"
+        print(f"[计时] {preprocess_msg}")
+        timing_logger.info(preprocess_msg)
 
         return self._process_single_frame(process_frame)
 
@@ -452,6 +496,9 @@ class RapidOCREngine:
         detections = []
 
         try:
+            # ===== 计时：OCR 推理 =====
+            t_ocr_start = time.perf_counter()
+
             # 调用 RapidOCR (v3.0+)
             # 如果是仅检测模式,传递use_det=True, use_cls=False, use_rec=False
             if self.detect_only:
@@ -459,8 +506,17 @@ class RapidOCREngine:
             else:
                 result = self.model(process_frame)
 
+            t_ocr_end = time.perf_counter()
+            ocr_time = (t_ocr_end - t_ocr_start) * 1000  # 毫秒
+
             if result is None:
+                no_result_msg = f"OCR推理: {ocr_time:.1f}ms (无结果)"
+                print(f"[计时] {no_result_msg}")
+                timing_logger.info(no_result_msg)
                 return boxes, detections
+
+            # ===== 计时：后处理开始 =====
+            t_post_start = time.perf_counter()
 
             # 仅检测模式返回 TextDetOutput,包含boxes和scores(检测置信度)
             if self.detect_only:
@@ -544,6 +600,16 @@ class RapidOCREngine:
                         "text": text,
                         "confidence": confidence  # 识别置信度
                     })
+
+            # ===== 计时：后处理结束 =====
+            t_post_end = time.perf_counter()
+            post_time = (t_post_end - t_post_start) * 1000  # 毫秒
+
+            # 打印计时汇总（同时输出到终端和日志文件）
+            h, w = process_frame.shape[:2]
+            ocr_msg = f"图像 {w}x{h} | OCR推理: {ocr_time:.1f}ms | 后处理: {post_time:.1f}ms | 检测到 {len(boxes)} 个框"
+            print(f"[计时] {ocr_msg}")
+            timing_logger.info(ocr_msg)
 
         except Exception as e:
             import traceback

@@ -463,6 +463,11 @@ class SubtitleEraserProPainter:
                     pil_img = pil_img.convert('RGB')
                     mask_pil.append(pil_img)
 
+                # 定义进度回调函数
+                def progress_callback():
+                    if pbar:
+                        pbar.update(1)
+
                 # 处理当前分段
                 result_pil = model.forward(
                     video=video_pil,
@@ -477,7 +482,8 @@ class SubtitleEraserProPainter:
                     subvideo_length=min(subvideo_length, chunk_len),
                     raft_iter=raft_iter,
                     fp16=fp16,
-                    save_fps=24.0
+                    save_fps=24.0,
+                    progress_callback=progress_callback
                 )
 
                 # 第一个 chunk：根据实际输出尺寸创建 tensor
@@ -495,8 +501,7 @@ class SubtitleEraserProPainter:
                         if out_idx < batch_size:
                             img_np = np.array(pil_img).astype(np.float32) / 255.0
                             output_tensor[out_idx] = torch.from_numpy(img_np)
-                            if pbar:
-                                pbar.update(1)
+                            # 进度条已在ProPainter内部通过回调更新，这里不需要重复更新
 
                 # 立即释放当前 chunk 的内存
                 del video_pil, mask_pil, result_pil
